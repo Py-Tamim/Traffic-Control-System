@@ -50,3 +50,77 @@ categorical_features = [
     "special_event_flag",
 ]
 
+preprocessor = ColumnTransformer(
+    transformers=[
+        ("numbers", SimpleImputer(strategy="median"), numeric_features),
+        (
+            "categories",
+            Pipeline(
+                steps=[
+                    ("fill_missing", SimpleImputer(strategy="most_frequent")),
+                    ("encode", OneHotEncoder(handle_unknown="ignore")),
+                ]
+            ),
+            categorical_features,
+        ),
+    ]
+)
+# Preprocessing 
+model = Pipeline(
+    steps=[
+        ("preprocess", preprocessor),
+        (
+            "classifier",
+            RandomForestClassifier(
+                n_estimators=200,
+                random_state=42,
+                class_weight="balanced",
+            ),
+        ),
+    ]
+)
+model.fit(df[features], df["traffic_level"])
+
+corridors = sorted(df["corridor_name"].astype(str).unique())
+weather_values = sorted(df["weather_condition"].astype(str).unique())
+weather_default = (
+    df["weather_condition"].mode().iloc[0]
+    if not df["weather_condition"].mode().empty
+    else "Unknown"
+)
+
+df.groupby("corridor_name")["speed_v_kmh"].mean().sort_values().plot(
+    kind="barh",
+    title="Historical Average Speed by Corridor",
+    xlabel="Average speed (km/h)",
+)
+plt.tight_layout()
+plt.show()
+
+def normalize(text):
+    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
+
+
+# Find dataset corridors mentioned in a user's road or place input.
+def match_corridors(text):
+    query = normalize(text)
+    exact_matches = [
+        corridor
+        for corridor in corridors
+        if normalize(corridor).replace("_", " ") in query
+    ]
+    if exact_matches:
+        return exact_matches
+
+    # If there is no full-name match, choose the corridor with the most shared words.
+    query_words = set(query.split())
+    scored_matches = []
+    for corridor in corridors:
+        corridor_words = set(normalize(corridor).replace("_", " ").split())
+        shared_word_count = len(query_words & corridor_words)
+        if shared_word_count:
+            scored_matches.append((shared_word_count, corridor))
+
+    # Return one closest corridor, or an empty list if nothing matched.
+    scored_matches.sort(reverse=True)
+    return [scored_matches[0][1]] if scored_matches else []

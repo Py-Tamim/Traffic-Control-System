@@ -149,3 +149,74 @@ def predict_corridors(candidate_corridors, hour, weekday, weather):
         results.append((corridor, severity_score, median_speed))
     return sorted(results, key=lambda result: (result[1], -result[2]))
 
+def main():
+    print("Corridors in this dataset:")
+    print(", ".join(corridors))
+    start = input("\nStarting from: ").strip()
+    stop = input("Stopping at: ").strip()
+    now = pd.Timestamp.now()
+    hour_input = input(f"Travel hour, 0-23 [current hour {now.hour}]: ").strip()
+    hour = int(hour_input) if hour_input else now.hour
+    if not 0 <= hour <= 23:
+        print("Hour must be between 0 and 23.")
+        return
+
+    weekday = now.dayofweek
+    print("Weather values in the dataset:", ", ".join(weather_values))
+    weather_input = input(f"Weather [{weather_default}]: ").strip()
+    weather = weather_input if weather_input in weather_values else weather_default
+    start_matches = match_corridors(start)
+    stop_matches = match_corridors(stop)
+    candidates = list(dict.fromkeys(start_matches + stop_matches))
+
+    if not candidates:
+        print("Could not match your input; comparing all dataset corridors.")
+        candidates = predict_corridors
+    ranked = predict_corridors(candidates, hour, weekday, weather)
+
+    print(f"\nTrip: {start} -> {stop}")
+    print(f"Prediction time: {now:%Y-%m-%d %H:%M}")
+    print(f"Travel hour used: {hour:02d}:00")
+    print(f"Weather used: {weather}")
+    if not ranked:
+        print("No matching corridor is available in the dataset.")
+        return
+    
+    best_corridor, best_severity, best_speed = ranked[0]
+    predicted_level = (
+        model.predict(
+            pd.DataFrame(
+                [{
+                    "corridor_name": best_corridor,
+                    "hour_of_day": hour,
+                    "day_of_week": weekday,
+                    "is_weekend": int(weekday >= 5),
+                    "weather_condition": weather,
+                    "special_event_flag": False,
+                }]
+            )[features]
+        )[0]
+    )
+    print(f"\nSuggested corridor: {best_corridor}")
+    print(f"Predicted traffic: {predicted_level}")
+    print(f"Historical median speed: {best_speed:.1f} km/h")
+    alternatives = [result for result in ranked if result[0] != best_corridor]
+    if predicted_level == "No traffic":
+        print("No traffic detected in the prediction. Please follow the suggested corridor.")
+    elif predicted_level in ("Light traffic", "Moderate traffic"):
+        print(f"You may face {predicted_level.lower()}.")
+        if alternatives:
+            print("One diversion to consider:", alternatives[0][0])
+    else:
+        print(f"{predicted_level} predicted. Please change your route.")
+        if alternatives:
+            print("Other recorded corridors to consider:")
+            for corridor, severity, speed in alternatives[:3]:
+                print(f"  - {corridor} (historical median speed: {speed:.1f} km/h)")
+    print(
+        "\nNote: This dataset contains historical corridor data, not a connected road map. "
+        "It cannot calculate reliable delay minutes or provide live GPS traffic."
+    )
+
+if __name__ == "__main__":
+    main()

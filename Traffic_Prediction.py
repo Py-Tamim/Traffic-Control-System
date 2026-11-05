@@ -94,3 +94,63 @@ def make_preprocessor():
             ),
         ]
     )
+
+classifier = Pipeline(
+    steps=[
+        ("preprocess", make_preprocessor()),
+        (
+            "model",
+            RandomForestClassifier(
+                n_estimators=200, random_state=42, class_weight="balanced", min_samples_leaf=10, n_jobs=-1
+            ),
+        ),
+    ]
+)
+regressor = Pipeline(
+    steps=[
+        ("preprocess", make_preprocessor()),
+        (
+            "model",
+            RandomForestRegressor(n_estimators=200, random_state=42, min_samples_leaf=10, n_jobs=-1),
+        ),
+    ]
+)
+train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
+classifier.fit(train_df[features], train_df["traffic_level"])
+regressor.fit(train_df[features], train_df[target_columns])
+
+
+accuracy = accuracy_score(                                    # Check model accuracy on unseen data (Comment this part if not needed). 
+    test_df["traffic_level"], classifier.predict(test_df[features])
+)
+r2 = r2_score(test_df[target_columns], regressor.predict(test_df[features]))
+print(f"Model check on unseen data: traffic-category accuracy = {accuracy:.0%}")  # (fOR r2 score(, "f"numeric-column R2 = {r2:.2f}))
+classifier.fit(df[features], df["traffic_level"])                  # Retraon model for final prediction. 
+regressor.fit(df[features], df[target_columns])
+corridors = sorted(df["corridor_name"].astype(str).unique())         #Part end
+
+def parse_date(date_text):
+    cleaned = date_text.strip().lower()
+    cleaned = re.sub(r"(?<=\d)(st|nd|rd|th)\b", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned.replace(",", " ")).strip()
+
+    # Try supported day-first and ISO date formats.
+    date_formats = [
+        "%d %B %Y", "%d %b %Y", "%d-%m-%Y", "%d/%m/%Y",
+        "%d-%m-%y", "%d/%m/%y", "%Y-%m-%d",
+    ]
+
+    # Return the first format that matches the user's date.
+    for date_format in date_formats:
+        try:
+            return datetime.strptime(cleaned, date_format).date()
+        except ValueError:
+            continue
+
+    # Tell the user which input styles are supported if none matched.
+    raise ValueError(
+        "Could not read that date. Try 16th January, 2027, "
+        "18-11-2026, or 18/11/26."
+    )
+
+#=============================================== Will be update soon =========================================

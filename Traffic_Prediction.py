@@ -261,4 +261,71 @@ def plot_predictions(plot_df, x_column, x_label, title, marker_hour=None):     #
     fig.autofmt_xdate()
     plt.tight_layout(rect=[0, 0, 1, 0.97])
     plt.show()
-#=============================================== Will be update soon =========================================
+
+def main():               # MAin Program.
+    date_input = input(
+        "Enter a date or date range (example: 16th January, 2027 "
+        "or 16-11-2026 to 16-02-2027): "
+    )
+    hour_input = input(
+        "Enter prediction hour or hour range (example: 7 | 7 am | 7 am to 11 am | "
+        "7-11 | 14 to 18) [12]: "
+    )
+
+    try:
+        dates = get_prediction_dates(date_input)
+        hours = get_prediction_hours(hour_input)
+    except ValueError as error:
+        print(error)
+        return
+
+    results = predict_all(dates, hours)
+    results.drop(columns=["severity"]).to_csv("predicted_traffic.csv", index=False)
+
+    show_columns = ["corridor_name", "traffic"] + time_columns + target_columns
+    pd.set_option("display.width", 250, "display.max_columns", 30, "display.max_rows", 200)
+    if len(dates) * len(hours) <= 6:
+        for date in dates:
+            for hour in hours:
+                subset = results[(results["date"] == date) & (results["hour_of_day"] == hour)]
+                subset = subset.sort_values("severity", ascending=False)
+                print(f"\nTraffic predictions for {date:%d %B %Y} at {hour:02d}:00")
+                print(subset[show_columns].to_string(index=False))
+                best = subset.iloc[-1]
+                print(f"Suggested corridor: {best['corridor_name']} ({best['traffic']})")
+    else:
+        summary = results.groupby("corridor_name")[target_columns + ["severity"]].mean()
+        most_common = results.groupby("corridor_name")["traffic"].agg(lambda s: s.mode().iloc[0])
+        summary.insert(0, "most_common_traffic", most_common)
+        summary = summary.sort_values("severity", ascending=False).round(2)
+        print(f"\nAverage predictions over {len(dates)} day(s) and hours {hours[0]:02d}:00-{hours[-1]:02d}:00")
+        print(summary.to_string())
+        print(f"\nSuggested corridor: {summary.index[-1]} ({summary.iloc[-1]['most_common_traffic']})")
+    print("\nFull detailed results were saved to predicted_traffic.csv")
+
+    if len(dates) == 1 and len(hours) == 1:
+        day = predict_all(dates, list(range(24)))
+        plot_predictions(
+            day, "hour_of_day", "Hour of day",
+            f"Predicted traffic on {dates[0]:%d %B %Y} (red line = {hours[0]:02d}:00)",
+            marker_hour=hours[0],
+        )
+    elif len(dates) == 1:
+        plot_predictions(
+            results, "hour_of_day", "Hour of day",
+            f"Predicted traffic on {dates[0]:%d %B %Y}, {hours[0]:02d}:00-{hours[-1]:02d}:00",
+        )
+    else:
+        daily = (
+            results.groupby(["date", "corridor_name"])[time_columns + target_columns + ["severity"]]
+            .mean()
+            .reset_index()
+        )
+        plot_predictions(
+            daily, "date", "Date",
+            f"Predicted traffic {dates[0]:%d %b %Y} to {dates[-1]:%d %b %Y} "
+            f"(average of {hours[0]:02d}:00-{hours[-1]:02d}:00)",
+        )
+
+if __name__ == "__main__":
+    main()

@@ -133,24 +133,132 @@ def parse_date(date_text):
     cleaned = date_text.strip().lower()
     cleaned = re.sub(r"(?<=\d)(st|nd|rd|th)\b", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned.replace(",", " ")).strip()
-
-    # Try supported day-first and ISO date formats.
     date_formats = [
         "%d %B %Y", "%d %b %Y", "%d-%m-%Y", "%d/%m/%Y",
         "%d-%m-%y", "%d/%m/%y", "%Y-%m-%d",
     ]
 
-    # Return the first format that matches the user's date.
     for date_format in date_formats:
         try:
             return datetime.strptime(cleaned, date_format).date()
         except ValueError:
             continue
-
-    # Tell the user which input styles are supported if none matched.
     raise ValueError(
         "Could not read that date. Try 16th January, 2027, "
         "18-11-2026, or 18/11/26."
     )
 
+def get_prediction_dates(date_input):
+    date_parts = re.split(r"\s+to\s+", date_input.strip(), flags=re.IGNORECASE)
+    start_date = parse_date(date_parts[0])
+    if len(date_parts) == 1:
+        return [pd.Timestamp(start_date)]
+
+    # Parse the end of the range and reject reversed ranges.
+    if len(date_parts) != 2:
+        raise ValueError("Enter one date or a range in the format date to date.")
+    end_date = parse_date(date_parts[1])
+    if end_date < start_date:
+        raise ValueError("The end date must be the same as or later than the start date.")
+
+    return list(pd.date_range(start=start_date, end=end_date, freq="D"))
+
+def parse_single_hour(hour_text):
+    match = re.fullmatch(r"(\d{1,2})(?::\d{2})?\s*(am|pm|a\.m\.|p\.m\.)?", hour_text.strip().lower())
+    if not match:
+        raise ValueError("Could not read the hour. Try 7, 7 am, or 7 am to 11 am.")
+    hour = int(match.group(1))
+    period = match.group(2)
+    if period:
+        if not 1 <= hour <= 12:
+            raise ValueError("With am/pm, the hour must be between 1 and 12.")
+        is_pm = period.startswith("p")
+        hour = hour % 12 + (12 if is_pm else 0)
+    if not 0 <= hour <= 23:
+        raise ValueError("Hour must be between 0 and 23.")
+    return hour
+
+def get_prediction_hours(hour_input):                    # Prediction
+    if not hour_input.strip():
+        return [12]
+    parts = re.split(r"\s+to\s+|\s*[-–]\s*", hour_input.strip(), flags=re.IGNORECASE)
+
+    if len(parts) == 1:
+        return [parse_single_hour(parts[0])]
+    if len(parts) != 2:
+        raise ValueError("Enter one hour or a range such as 7 am to 11 am.")
+    start_text, end_text = parts
+    suffix = re.search(r"(am|pm|a\.m\.|p\.m\.)$", end_text.strip().lower())
+    if suffix and not re.search(r"(am|pm|a\.m\.|p\.m\.)$", start_text.strip().lower()):
+        start_text = f"{start_text} {suffix.group(1)}"
+    start_hour = parse_single_hour(start_text)
+    end_hour = parse_single_hour(end_text)
+    if end_hour < start_hour:
+        raise ValueError("The end hour must be the same as or later than the start hour.")
+    
+    return list(range(start_hour, end_hour + 1))
+
+def predict_all(dates, hours):
+    rows = []
+    for date in dates:
+        for hour in hours:
+            for corridor in corridors:
+                rows.append(
+                    {
+                        "date": date,
+                        "corridor_name": corridor,
+                        "hour_of_day": hour,
+                        "day_of_week": date.dayofweek,
+                        "is_weekend": int(date.dayofweek >= 5),
+                        # Same formula as the CSV: the hour as an angle on a 24h circle.
+                        "sin_time": round(float(np.sin(2 * np.pi * hour / 24)), 5),
+                        "cos_time": round(float(np.cos(2 * np.pi * hour / 24)), 5),
+                    }
+                )
+    result = pd.DataFrame(rows)
+
+    numeric_predictions = pd.DataFrame(
+        regressor.predict(result[features]), columns=target_columns, index=result.index
+    )
+    result = pd.concat([result, numeric_predictions.round(3)], axis=1)
+    probabilities = classifier.predict_proba(result[features])
+    classes = classifier.named_steps["model"].classes_
+    result["traffic"] = classifier.predict(result[features])
+    result["severity"] = [
+        sum(severity_order[label] * p for label, p in zip(classes, row))
+        for row in probabilities
+    ]
+    return result
+
+def plot_predictions(plot_df, x_column, x_label, title, marker_hour=None):     # Graphical representation of the prediction result.
+    panels = time_columns + target_columns + ["severity"]
+    fig, axes = plt.subplots(5, 3, figsize=(18, 20), sharex=True)
+    fig.suptitle(title, fontsize=15)
+
+    for axis, column in zip(axes.flat, panels):
+        if column in time_columns:
+            single = plot_df[plot_df["corridor_name"] == corridors[0]]
+            axis.plot(single[x_column], single[column], color="black", marker="o", markersize=3)
+        else:
+            for corridor in corridors:
+                part = plot_df[plot_df["corridor_name"] == corridor]
+                axis.plot(part[x_column], part[column], marker="o", markersize=3, label=corridor)
+
+        if marker_hour is not None:
+            axis.axvline(marker_hour, color="red", linestyle="--", alpha=0.6)
+
+        axis.set_title(column_titles[column], fontsize=10)
+        axis.grid(alpha=0.3)
+        if x_column == "hour_of_day":
+            axis.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+    for axis in list(axes.flat)[len(panels):]:
+        axis.axis("off")
+    handles, labels = axes.flat[2].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower right", ncol=1, fontsize=11)
+    for axis in axes[-1]:
+        axis.set_xlabel(x_label)
+    fig.autofmt_xdate()
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    plt.show()
 #=============================================== Will be update soon =========================================

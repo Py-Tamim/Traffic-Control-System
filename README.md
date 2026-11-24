@@ -350,4 +350,4 @@ There are several opportunities to improve and expand this project in the future
 
 The project was developed as a practical learning experience to explore how machine learning can be applied to real-world transportation challenges in Dhaka, Bangladesh.
 
-This project is intended for educational and research purposes. You may explore, modify, and extend it with appropriate attribution.
+## This project is intended for educational and research purposes. You may explore, modify, and extend it with appropriate attribution.
